@@ -40,7 +40,7 @@ def make_card(price: Decimal, delta: Decimal):
     from PIL import ImageFont, Image
 
     # Load background image
-    bg = Image.open("Untitled design.png").convert("RGBA")
+    bg = Image.open("sol-card.jpg").convert("RGBA")
 
     # Resize banner to card size
     w, h = 1200, 628
