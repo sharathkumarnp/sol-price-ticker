@@ -2,8 +2,8 @@ name: SOL Price Notifier
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # every 5 minutes (GitHub's minimum reliable cadence)
-  workflow_dispatch:        # allow manual run
+    - cron: "*/2 * * * *"  # every 2 minutes
+  workflow_dispatch:
 
 permissions:
   contents: write           # so we can update state.json in the repo
