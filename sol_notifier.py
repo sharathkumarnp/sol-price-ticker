@@ -1,16 +1,18 @@
 import json, os, requests
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP, getcontext
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
-# Precision for financial math
+# Precision config
 getcontext().prec = 16
 
-DELTA = Decimal(os.environ.get("DELTA", "0.01"))  # default alert threshold
+# --- Configuration ---
+DELTA = Decimal(os.environ.get("DELTA", "5.00"))  # Alert when price changes by $5
 STATE_FILE = "state.json"
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
+# Price formatting
 def q2(d: Decimal) -> Decimal:
     return d.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
@@ -35,43 +37,58 @@ def pretty_price(d: Decimal) -> str:
     return f"${q2(d):,.2f}"
 
 def make_card(price: Decimal, delta: Decimal):
-    w, h = 1200, 628
-    img = Image.new("RGB", (w, h), (28, 18, 64))
-    dr = ImageDraw.Draw(img)
+    # Card size and roundness
+    w, h, radius = 1200, 628, 40
+    bg = Image.new("RGB", (w, h), (0, 0, 0))
+    dr = ImageDraw.Draw(bg)
+
+    # Solana gradient (vertical)
     for y in range(h):
-        r, g, b = int(40 + y/h*30), int(30 + y/h*40), int(100 + y/h*80)
+        r = int(0 + (92 - 0) * (y / h))
+        g = int(255 - (255 - 0) * (y / h))
+        b = int(191 + (255 - 191) * (y / h))
         dr.line([(0, y), (w, y)], fill=(r, g, b))
 
-    font_path_bold = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    font_path_reg = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-    font_big = ImageFont.truetype(font_path_bold, 150) if os.path.exists(font_path_bold) else ImageFont.load_default()
-    font_med = ImageFont.truetype(font_path_reg, 46) if os.path.exists(font_path_reg) else ImageFont.load_default()
+    # Rounded mask
+    mask = Image.new("L", (w, h), 0)
+    mask_draw = ImageDraw.Draw(mask)
+    mask_draw.rounded_rectangle([(0, 0), (w, h)], radius=radius, fill=255)
 
-    dr.text((60, 50), "SOL / USDT", fill=(230, 230, 255), font=font_med)
+    # Apply round corners
+    rounded = Image.new("RGBA", (w, h))
+    rounded.paste(bg, (0, 0))
+    rounded.putalpha(mask)
 
-    price_text = pretty_price(price)
-    tw, th, _, _ = dr.textbbox((0,0), price_text, font=font_big)
-    dr.text(((w - tw)//2, (h - th)//2 - 40), price_text, fill=(255,255,255), font=font_big)
+    # Fonts
+    font_bold_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    font_reg_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+    font_big = ImageFont.truetype(font_bold_path, 160) if os.path.exists(font_bold_path) else ImageFont.load_default()
+    font_med = ImageFont.truetype(font_reg_path, 48) if os.path.exists(font_reg_path) else ImageFont.load_default()
+    font_small = ImageFont.truetype(font_reg_path, 36) if os.path.exists(font_reg_path) else ImageFont.load_default()
 
-    up = delta > 0
-    dir_emoji = "📈" if up else ("📉" if delta < 0 else "〰️")
-    delta_text = f"{dir_emoji} {delta:+.2f} since last alert"
-    dtw, dth, _, _ = dr.textbbox((0,0), delta_text, font=font_med)
-    dr.text(((w - dtw)//2, (h - dth)//2 + 100), delta_text, fill=(220, 235, 255), font=font_med)
+    # Draw text overlay
+    overlay = Image.new("RGBA", (w, h), (255, 255, 255, 0))
+    draw = ImageDraw.Draw(overlay)
 
-    if up:
-        dr.line([(80, 140), (220, 80)], fill=(255, 255, 255), width=10)
-        dr.polygon([(220, 80), (200, 78), (212, 92)], fill=(255, 255, 255))
-    else:
-        dr.line([(80, 80), (220, 140)], fill=(255, 255, 255), width=10)
-        dr.polygon([(220, 140), (200, 138), (212, 152)], fill=(255, 255, 255))
+    # Price centered
+    price_str = pretty_price(price)
+    tw, th = draw.textbbox((0, 0), price_str, font=font_big)[2:]
+    draw.text(((w - tw) // 2, (h - th) // 2 - 20), price_str, fill=(255, 255, 255, 255), font=font_big)
 
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    footer = f"Auto Update • {now}"
-    ftw, fth, _, _ = dr.textbbox((0,0), footer, font=font_med)
-    dr.text(((w - ftw)//2, h - fth - 50), footer, fill=(220,220,240), font=font_med)
+    # Delta
+    emoji = "📈" if delta > 0 else "📉"
+    delta_str = f"{emoji} {delta:+.2f} since last alert"
+    dtw, dth = draw.textbbox((0, 0), delta_str, font=font_med)[2:]
+    draw.text(((w - dtw) // 2, (h - dth) // 2 + 120), delta_str, fill=(240, 240, 240, 255), font=font_med)
 
-    img.save("sol_card.png", "PNG")
+    # Footer
+    footer = "@sol_price_bot"
+    ftw, fth = draw.textbbox((0, 0), footer, font=font_small)[2:]
+    draw.text(((w - ftw) // 2, h - fth - 40), footer, fill=(220, 220, 255, 255), font=font_small)
+
+    # Merge layers
+    final = Image.alpha_composite(rounded, overlay)
+    final.save("sol_card.png", "PNG")
 
 def send_photo_to_telegram(caption=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
@@ -102,7 +119,7 @@ def main():
         save_state(state)
         print(f"Posted change {delta:+.2f}, new last_price={price}")
     else:
-        print(f"No alert: |Δ|={abs(delta):.2f} < {DELTA:.2f} (last={last}, now={price})")
+        print(f"No alert: Δ={delta:+.2f}, threshold={DELTA:.2f}")
 
 if __name__ == "__main__":
     main()
