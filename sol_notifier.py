@@ -7,7 +7,7 @@ from PIL import Image, ImageDraw, ImageFont, ImageOps
 getcontext().prec = 16
 
 # --- Configuration ---
-DELTA = Decimal(os.environ.get("DELTA", "5.00"))  # Alert when price changes by $5
+DELTA = Decimal(os.environ.get("DELTA", "0.01"))  # Alert when price changes by $5
 STATE_FILE = "state.json"
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
