@@ -38,8 +38,6 @@ def save_state(s):
 def pretty_price(d: Decimal) -> str:
     return f"${q2(d):,.2f}"
 
-dfrom typing import Tuple
-
  def _autosize_font(draw, text: str, max_width: int, start: int, path: str) -> "ImageFont.FreeTypeFont":
      """Decrease font size until text fits within max_width."""
      size = start
