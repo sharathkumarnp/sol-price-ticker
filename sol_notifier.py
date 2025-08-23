@@ -2,6 +2,8 @@ import json, os, requests
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP, getcontext
 from PIL import Image, ImageDraw, ImageFont, ImageOps
+from typing import Tuple
+
 
 # Precision config
 getcontext().prec = 16
@@ -36,48 +38,92 @@ def save_state(s):
 def pretty_price(d: Decimal) -> str:
     return f"${q2(d):,.2f}"
 
-def make_card(price: Decimal, delta: Decimal):
-    from PIL import ImageFont, Image
+dfrom typing import Tuple
 
-    # Load background image
-    bg = Image.open("sol-card.jpg").convert("RGBA")
+ def _autosize_font(draw, text: str, max_width: int, start: int, path: str) -> "ImageFont.FreeTypeFont":
+     """Decrease font size until text fits within max_width."""
+     size = start
+     while size > 10:
+         try:
+             f = ImageFont.truetype(path, size)
+         except Exception:
+             f = ImageFont.load_default()
+             return f
+         w, _ = draw.textbbox((0, 0), text, font=f)[2:]
+         if w <= max_width:
+             return f
+         size -= 2
+     return ImageFont.load_default()
 
-    # Resize banner to card size
-    w, h = 1200, 628
-    bg = bg.resize((w, h))
+ def make_card(price: Decimal, delta: Decimal):
+     from PIL import Image, ImageDraw, ImageFont
 
-    # Rounded mask
-    radius = 40
-    mask = Image.new("L", (w, h), 0)
-    mask_draw = ImageDraw.Draw(mask)
-    mask_draw.rounded_rectangle([(0, 0), (w, h)], radius=radius, fill=255)
-    bg.putalpha(mask)
+     # ---------- layout ----------
+     W, H        = 1200, 628        # final card size
+     RADIUS      = 48               # corner roundness
+     PADDING     = 36               # inner transparent margin to avoid double-rounding artifacts
+     LEFT_X      = 120              # left shift for price text
+     PRICE_MAX_W = W - LEFT_X - 120 # keep some right breathing room
 
-    # Fonts
-    font_bold_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    font_reg_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-    font_big = ImageFont.truetype(font_bold_path, 160) if os.path.exists(font_bold_path) else ImageFont.load_default()
-    font_small = ImageFont.truetype(font_reg_path, 48) if os.path.exists(font_reg_path) else ImageFont.load_default()
+     # ---------- fonts (place optional TTFs in repo root for nicer look) ----------
+     # Recommended to add these files to the repo for a modern look:
+     #  - Inter-Bold.ttf   (or Manrope-ExtraBold.ttf)
+     #  - Inter-Medium.ttf (or Manrope-SemiBold.ttf)
+     FONT_BOLD = "Inter-Bold.ttf"    if os.path.exists("Inter-Bold.ttf")    else "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+     FONT_MED  = "Inter-Medium.ttf"  if os.path.exists("Inter-Medium.ttf")  else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
-    # Overlay
-    overlay = Image.new("RGBA", (w, h), (255, 255, 255, 0))
-    draw = ImageDraw.Draw(overlay)
+     # ---------- background (banner) with perfect rounded corners & transparency ----------
+     base = Image.new("RGBA", (W, H), (0, 0, 0, 0))                  # transparent canvas
+     try:
+         bg = Image.open("sol-card.jpg").convert("RGBA")
+     except Exception:
+         # fallback to a soft gradient if banner missing
+         bg = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+         gr = ImageDraw.Draw(bg)
+         for y in range(H):
+             r = int(14 + (90 - 14) * y / H)
+             g = int(20 + (230 - 20) * y / H)
+             b = int(30 + (210 - 30) * y / H)
+             gr.line([(0, y), (W, y)], fill=(r, g, b, 255))
+     bg = bg.resize((W - 2*PADDING, H - 2*PADDING), Image.LANCZOS)
 
-    # Price text (slightly left of center)
-    price_str = f"${price:,.2f}"
-    tw, th = draw.textbbox((0, 0), price_str, font=font_big)[2:]
-    x_offset = (w - tw) // 2 - 150   # shift left by 150px
-    draw.text((x_offset, (h - th) // 2 - 20), price_str, fill=(255, 255, 255, 255), font=font_big)
+     # mask for rounded rect
+     mask = Image.new("L", (W - 2*PADDING, H - 2*PADDING), 0)
+     md   = ImageDraw.Draw(mask)
+     md.rounded_rectangle([0, 0, W - 2*PADDING, H - 2*PADDING], radius=RADIUS, fill=255)
 
-    # Footer handle (slightly below)
-    footer = "@solpriceticker"
-    ftw, fth = draw.textbbox((0, 0), footer, font=font_small)[2:]
-    draw.text(((w - ftw) // 2, h - fth - 50), footer, fill=(220, 220, 255, 255), font=font_small)
+     # paste rounded banner onto transparent base with inner padding
+     base.paste(bg, (PADDING, PADDING), mask)
 
-    # Merge
-    final = Image.alpha_composite(bg, overlay)
-    final.save("sol_card.png", "PNG", optimize=True)
+     # ---------- text overlay ----------
+     overlay = Image.new("RGBA", (W, H), (255, 255, 255, 0))
+     dr = ImageDraw.Draw(overlay)
 
+     price_str = f"${q2(price):,.2f}"
+
+     # auto-size big price to fit the available width
+     tmp_font_for_measure = ImageFont.truetype(FONT_BOLD, 160) if os.path.exists(FONT_BOLD) else ImageFont.load_default()
+     font_big = _autosize_font(dr, price_str, PRICE_MAX_W, 160, FONT_BOLD)
+
+     # vertical placement around middle
+     _, _, tw, th = dr.textbbox((0, 0), price_str, font=font_big)
+     x = LEFT_X
+     y = (H - th) // 2 - 10
+
+     # subtle shadow for contrast
+     shadow_offset = 3
+     dr.text((x + shadow_offset, y + shadow_offset), price_str, font=font_big, fill=(0, 0, 0, 120))
+     dr.text((x, y), price_str, font=font_big, fill=(255, 255, 255, 255))
+
+     # small handle at bottom center (cleaner font & size)
+     handle = ""
+     font_small = ImageFont.truetype(FONT_MED, 40) if os.path.exists(FONT_MED) else ImageFont.load_default()
+     _, _, hw, hh = dr.textbbox((0, 0), handle, font=font_small)
+     dr.text(((W - hw) // 2, H - hh - 34), handle, font=font_small, fill=(235, 240, 255, 230))
+
+     # merge and save (PNG with alpha for perfect corners)
+     final = Image.alpha_composite(base, overlay)
+     final.save("sol_card.png", "PNG", optimize=True)
 
 def send_photo_to_telegram(caption=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
