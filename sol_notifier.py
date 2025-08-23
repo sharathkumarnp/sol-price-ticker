@@ -37,58 +37,47 @@ def pretty_price(d: Decimal) -> str:
     return f"${q2(d):,.2f}"
 
 def make_card(price: Decimal, delta: Decimal):
-    # Card size and roundness
-    w, h, radius = 1200, 628, 40
-    bg = Image.new("RGB", (w, h), (0, 0, 0))
-    dr = ImageDraw.Draw(bg)
+    from PIL import ImageFont, Image
 
-    # Solana gradient (vertical)
-    for y in range(h):
-        r = int(0 + (92 - 0) * (y / h))
-        g = int(255 - (255 - 0) * (y / h))
-        b = int(191 + (255 - 191) * (y / h))
-        dr.line([(0, y), (w, y)], fill=(r, g, b))
+    # Load background image
+    bg = Image.open("Untitled design.png").convert("RGBA")
+
+    # Resize banner to card size
+    w, h = 1200, 628
+    bg = bg.resize((w, h))
 
     # Rounded mask
+    radius = 40
     mask = Image.new("L", (w, h), 0)
     mask_draw = ImageDraw.Draw(mask)
     mask_draw.rounded_rectangle([(0, 0), (w, h)], radius=radius, fill=255)
-
-    # Apply round corners
-    rounded = Image.new("RGBA", (w, h))
-    rounded.paste(bg, (0, 0))
-    rounded.putalpha(mask)
+    bg.putalpha(mask)
 
     # Fonts
     font_bold_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     font_reg_path = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
     font_big = ImageFont.truetype(font_bold_path, 160) if os.path.exists(font_bold_path) else ImageFont.load_default()
-    font_med = ImageFont.truetype(font_reg_path, 48) if os.path.exists(font_reg_path) else ImageFont.load_default()
-    font_small = ImageFont.truetype(font_reg_path, 36) if os.path.exists(font_reg_path) else ImageFont.load_default()
+    font_small = ImageFont.truetype(font_reg_path, 48) if os.path.exists(font_reg_path) else ImageFont.load_default()
 
-    # Draw text overlay
+    # Overlay
     overlay = Image.new("RGBA", (w, h), (255, 255, 255, 0))
     draw = ImageDraw.Draw(overlay)
 
-    # Price centered
-    price_str = pretty_price(price)
+    # Price text (slightly left of center)
+    price_str = f"${price:,.2f}"
     tw, th = draw.textbbox((0, 0), price_str, font=font_big)[2:]
-    draw.text(((w - tw) // 2, (h - th) // 2 - 20), price_str, fill=(255, 255, 255, 255), font=font_big)
+    x_offset = (w - tw) // 2 - 150   # shift left by 150px
+    draw.text((x_offset, (h - th) // 2 - 20), price_str, fill=(255, 255, 255, 255), font=font_big)
 
-    # Delta
-    emoji = "📈" if delta > 0 else "📉"
-    delta_str = f"{emoji} {delta:+.2f} since last alert"
-    dtw, dth = draw.textbbox((0, 0), delta_str, font=font_med)[2:]
-    draw.text(((w - dtw) // 2, (h - dth) // 2 + 120), delta_str, fill=(240, 240, 240, 255), font=font_med)
-
-    # Footer
-    footer = "@sol_price_bot"
+    # Footer handle (slightly below)
+    footer = "@solpriceticker"
     ftw, fth = draw.textbbox((0, 0), footer, font=font_small)[2:]
-    draw.text(((w - ftw) // 2, h - fth - 40), footer, fill=(220, 220, 255, 255), font=font_small)
+    draw.text(((w - ftw) // 2, h - fth - 50), footer, fill=(220, 220, 255, 255), font=font_small)
 
-    # Merge layers
-    final = Image.alpha_composite(rounded, overlay)
-    final.save("sol_card.png", "PNG")
+    # Merge
+    final = Image.alpha_composite(bg, overlay)
+    final.save("sol_card.png", "PNG", optimize=True)
+
 
 def send_photo_to_telegram(caption=None):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendPhoto"
@@ -113,9 +102,20 @@ def main():
 
     if abs(delta) >= DELTA:
         make_card(price, delta)
-        caption = f"<b>SOL</b> moved {delta:+.2f} since last alert\nCurrent: <b>{pretty_price(price)}</b>"
+
+        # Pick emoji based on direction
+        if delta > 0:
+            emoji = "📈"
+        elif delta < 0:
+            emoji = "📉"
+        else:
+            emoji = "〰️"
+
+        caption = f"{emoji} {pretty_price(price)} @solpriceticker"
+
         send_photo_to_telegram(caption)
         state["last_price"] = str(price)
+
         save_state(state)
         print(f"Posted change {delta:+.2f}, new last_price={price}")
     else:
