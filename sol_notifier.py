@@ -65,7 +65,7 @@ def make_card(price: Decimal, delta: Decimal):
     FONT_MED  = "Inter-Medium.ttf" if os.path.exists("Inter-Medium.ttf") else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
 
     # load banner
-    banner_path = "sol-card.jpg" if os.path.exists("sol-card.jpg") else None
+    banner_path = "sol-card.png" if os.path.exists("sol-card.jpg") else None
     if banner_path:
         bg = Image.open(banner_path).convert("RGBA")
     else:
